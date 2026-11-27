@@ -45,10 +45,7 @@ form input{flex:1;font:600 17px ui-monospace,monospace;min-height:48px;padding:0
 <div class="wrap">
   <header><h1>Quét đơn TikTok Shop</h1><span class="pill" id="pairPill" title="Mã ghép nối">—</span></header>
 
-  <div class="seg" role="group" aria-label="Shop">
-    <button type="button" data-shop="tieuyen" aria-pressed="false">Mắt kính Tiểu Yến</button>
-    <button type="button" data-shop="haiau" aria-pressed="false">Kính lão Hải Âu</button>
-  </div>
+  <p class="hint" style="margin:0 0 8px">Tự nhận diện shop: cả 2 máy tính cùng tra, shop nào có đơn sẽ báo về đây.</p>
 
   <section class="card" id="setup" hidden>
     <b>Ghép nối với máy tính (1 lần)</b>
@@ -87,10 +84,7 @@ $('setup').hidden = ls.get('paired', false);
 $('setupDone').onclick = () => { ls.set('paired', true); $('setup').hidden = true; };
 $('showPair').onclick = e => { e.preventDefault(); $('setup').hidden = false; };
 
-let shop = ls.get('shop', '');
-const drawShop = () => document.querySelectorAll('[data-shop]').forEach(b => b.setAttribute('aria-pressed', b.dataset.shop === shop));
-document.querySelectorAll('[data-shop]').forEach(b => b.onclick = () => { shop = b.dataset.shop; ls.set('shop', shop); drawShop(); });
-drawShop();
+const pending = new Map(); // id -> timer: no shop answered in time = not found anywhere
 
 // ---------- results come back on <topic>-r ----------
 let es = null;
@@ -100,7 +94,12 @@ function listen() {
   es.onopen = () => { $('netDot').classList.add('on'); $('netText').textContent = 'Đã kết nối kênh. Máy tính sẽ trả kết quả ở đây.'; };
   es.onerror = () => { $('netDot').classList.remove('on'); $('netText').textContent = 'Mất kết nối kênh, đang thử lại…'; };
   es.onmessage = ev => {
-    try { const m = JSON.parse(ev.data); if (m.event !== 'message') return; const r = JSON.parse(m.message); setLog(String(r.id), String(r.status || '')); } catch {}
+    try {
+      const m = JSON.parse(ev.data); if (m.event !== 'message') return;
+      const r = JSON.parse(m.message), id = String(r.id);
+      clearTimeout(pending.get(id)); pending.delete(id);
+      setLog(id, (r.shop ? r.shop + ': ' : '') + String(r.status || ''), r.found === false ? 'bad' : null);
+    } catch {}
   };
 }
 listen();
@@ -112,14 +111,14 @@ async function send(raw) {
   const m = code.match(/order_no=(\d{15,22})/); if (m) code = m[1];
   code = code.replace(/\s+/g, '').slice(0, 60);
   if (!code) return;
-  if (!shop) { alertMsg('Chọn shop ở trên trước khi quét.'); return; }
   if (recent.has(code) && Date.now() - recent.get(code) < 5000) return;
   recent.set(code, Date.now());
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  addLog(id, code, 'Đã gửi — chờ máy tính tra…');
+  addLog(id, code, 'Đã gửi — 2 shop đang tra…');
+  pending.set(id, setTimeout(() => { pending.delete(id); setLog(id, 'Không tìm thấy ở cả 2 shop (hoặc máy tính chưa mở Seller Center)', 'bad'); }, 60000));
   ping();
   try {
-    const r = await fetch(`${NTFY}/${topic}`, { method: 'POST', body: JSON.stringify({ id, code, shop }) });
+    const r = await fetch(`${NTFY}/${topic}`, { method: 'POST', body: JSON.stringify({ id, code, shop: '' }) });
     if (r.status === 429) setLog(id, 'Hết lượt gửi miễn phí hôm nay (giới hạn ntfy.sh). Thử lại sau hoặc dùng mạng khác.');
     else if (!r.ok) setLog(id, 'Lỗi gửi (' + r.status + ')');
   } catch { setLog(id, 'Không gửi được — kiểm tra mạng'); }
@@ -210,8 +209,8 @@ function addLog(id, code, msg) {
   li.innerHTML = `<time>${new Date().toLocaleTimeString('vi-VN')}</time><span class="code">${esc(code)}</span><span class="res warn">${esc(msg)}</span>`;
   $('log').prepend(li); while ($('log').children.length > 50) $('log').lastChild.remove();
 }
-function setLog(id, status) {
-  document.querySelectorAll(`li[data-id="${CSS.escape(id)}"] .res`).forEach(el => { el.textContent = status || '—'; el.className = 'res ' + cls(status); });
+function setLog(id, status, force) {
+  document.querySelectorAll(`li[data-id="${CSS.escape(id)}"] .res`).forEach(el => { el.textContent = status || '—'; el.className = 'res ' + (force || cls(status)); });
 }
 }
 </script>
